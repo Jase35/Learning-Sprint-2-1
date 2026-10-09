@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overflow Lab — Interactive Buffer &amp; Integer Overflow Visualizer</title>
+<meta name="description" content="A safe, interactive teaching module that visualizes stack-frame buffer overflows and integer/arithmetic overflows in the browser." />
+<link rel="stylesheet" href="css/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#129514;</text></svg>" />
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">&#129514;</span>
+    <div>
+      <h1>Overflow Lab</h1>
+      <p class="tagline">An interactive, safe teaching module for <strong>buffer overflow</strong> and <strong>integer overflow</strong>.</p>
+    </div>
+  </div>
+  <div class="safety-note" role="note">
+    <strong>Simulation only.</strong> Nothing here executes real memory operations, shellcode, or exploits. Every "address" and byte is a
+    JavaScript object drawn on a canvas of <code>&lt;div&gt;</code>s.
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Lesson selector">
+  <button class="tab" id="tab-stack" role="tab" aria-selected="true" aria-controls="panel-stack" data-panel="panel-stack">
+    1 &middot; Stack Buffer Overflow
+  </button>
+  <button class="tab" id="tab-int" role="tab" aria-selected="false" aria-controls="panel-int" data-panel="panel-int" tabindex="-1">
+    2 &middot; Integer Overflow
+  </button>
+</nav>
+
+<!-- ============================================================= -->
+<!-- PANEL 1 : STACK BUFFER OVERFLOW                                -->
+<!-- ============================================================= -->
+<main>
+<section class="panel" id="panel-stack" role="tabpanel" aria-labelledby="tab-stack">
+
+  <div class="lesson-intro">
+    <h2>What happens when input is bigger than the box you put it in?</h2>
+    <p>
+      A C function stores its local variables on the <em>stack</em>. Right above those locals sit the values the CPU needs to
+      get back home: the <strong>saved frame pointer</strong> and the <strong>return address</strong>. A copy function that
+      never checks length will happily keep writing past the end of the buffer and straight through them.
+      Type something below and watch it happen, one byte at a time.
+    </p>
+  </div>
+
+  <div class="workspace">
+
+    <!-- ---------- left: controls + code ---------- -->
+    <div class="col col-controls">
+
+      <div class="card">
+        <h3>1. Choose a scenario</h3>
+        <label class="field">
+          <span>Preset</span>
+          <select id="st-preset">
+            <option value="safe">A. Input fits — nothing bad happens</option>
+            <option value="exact">B. Exact fit — the NUL byte still spills</option>
+            <option value="offbyone">C. Off-by-one — a single stray byte</option>
+            <option value="canary">D. Overwrite the canary — crash, but detected</option>
+            <option value="smash">E. Smash the return address</option>
+            <option value="custom">F. Custom — type your own</option>
+          </select>
+        </label>
+        <p class="hint" id="st-preset-hint"></p>
+      </div>
+
+      <div class="card">
+        <h3>2. Tune the vulnerable function</h3>
+
+        <label class="field">
+          <span>Input string <small>(what the attacker sends)</small></span>
+          <input type="text" id="st-input" maxlength="64" spellcheck="false" autocomplete="off" value="hello" />
+        </label>
+        <p class="meter">
+          Input length: <strong id="st-input-len">5</strong> bytes
+          + 1 NUL terminator =
+          <strong id="st-write-len">6</strong> bytes written
+        </p>
+
+        <label class="field">
+          <span>Buffer size <code>char buf[<b id="st-bufsize-label">16</b>]</code></span>
+          <input type="range" id="st-bufsize" min="8" max="32" step="8" value="16" />
+        </label>
+
+        <label class="field">
+          <span>Copy function</span>
+          <select id="st-copyfn">
+            <option value="strcpy">strcpy() &mdash; unbounded, unsafe</option>
+            <option value="loop">for (i = 0; i &lt;= n; i++) &mdash; off-by-one</option>
+            <option value="strncpy">strncpy(buf, src, sizeof buf - 1) &mdash; safe</option>
+          </select>
+        </label>
+
+        <div class="toggles">
+          <label class="switch">
+            <input type="checkbox" id="st-canary" checked />
+            <span>Stack canary (<code>-fstack-protector</code>)</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="st-ascii" checked />
+            <span>Show ASCII column</span>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Animation speed</span>
+          <input type="range" id="st-speed" min="0" max="5" step="1" value="3" />
+          <small class="range-legend"><span>slow</span><span id="st-speed-label">normal</span><span>instant</span></small>
+        </label>
+      </div>
+
+      <div class="card">
+        <h3>3. Run it</h3>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="st-run">&#9654; Run the copy</button>
+          <button class="btn" id="st-step">Step &#8594;</button>
+          <button class="btn" id="st-reset">Reset</button>
+        </div>
+        <p class="hint">
+          <b>Run</b> animates every byte. <b>Step</b> writes a single byte so you can watch the exact moment
+          the buffer boundary is crossed.
+        </p>
+      </div>
+
+      <div class="card code-card">
+        <h3>The code being simulated</h3>
+        <pre class="code" id="st-code"></pre>
+      </div>
+    </div>
+
+    <!-- ---------- middle: the stack ---------- -->
+    <div class="col col-stack">
+      <div class="card stack-card">
+        <div class="stack-head">
+          <h3>Stack frame of <code>vulnerable()</code></h3>
+          <div class="legend">
+            <span class="chip chip-ret">return address</span>
+            <span class="chip chip-sfp">saved RBP</span>
+            <span class="chip chip-canary">canary</span>
+            <span class="chip chip-buf">buf[]</span>
+          </div>
+        </div>
+        <div class="stack-axis">
+          <span>&#9650; higher addresses &mdash; where the function came from</span>
+        </div>
+        <div class="stack-scroll" id="st-stack" tabindex="0" aria-label="Simulated stack memory, one byte per row"></div>
+        <div class="stack-axis stack-axis-bottom">
+          <span>&#9660; lower addresses &mdash; the stack grows this way</span>
+        </div>
+        <p class="stack-foot">
+          <code>strcpy()</code> writes <b>upward</b> from the bottom of <code>buf</code> toward the return address.
+        </p>
+      </div>
+    </div>
+
+    <!-- ---------- right: verdict ---------- -->
+    <div class="col col-verdict">
+      <div class="card">
+        <h3>Live registers &amp; status</h3>
+        <dl class="regs">
+          <dt>bytes written</dt><dd id="st-reg-written">0</dd>
+          <dt>bytes past <code>buf</code></dt><dd id="st-reg-past">0</dd>
+          <dt>saved RBP</dt><dd id="st-reg-sfp" class="mono">&mdash;</dd>
+          <dt>return address</dt><dd id="st-reg-ret" class="mono">&mdash;</dd>
+          <dt>canary</dt><dd id="st-reg-canary" class="mono">&mdash;</dd>
+        </dl>
+      </div>
+
+      <div class="card verdict" id="st-verdict">
+        <h3>Verdict</h3>
+        <div class="verdict-body" id="st-verdict-body">
+          <p class="verdict-state state-idle">Idle &mdash; press <b>Run the copy</b>.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>What just happened</h3>
+        <ol class="explain" id="st-explain">
+          <li>Nothing yet. Run a scenario to build the explanation.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3>How to prevent it</h3>
+        <ul class="tips">
+          <li>Use length-aware APIs: <code>strncpy</code>, <code>snprintf</code>, <code>strlcpy</code>, or C++ <code>std::string</code>.</li>
+          <li>Always reserve room for the <code>'\0'</code>: <code>sizeof buf - 1</code>, then terminate manually.</li>
+          <li>Keep compiler defenses on: stack canaries, ASLR, non-executable stack (NX/DEP).</li>
+          <li>Treat <code>&lt;=</code> in a bounds check as a code smell &mdash; it is the classic off-by-one.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- PANEL 2 : INTEGER OVERFLOW                                     -->
+<!-- ============================================================= -->
+<section class="panel" id="panel-int" role="tabpanel" aria-labelledby="tab-int" hidden>
+
+  <div class="lesson-intro">
+    <h2>Numbers in C live in fixed-width boxes too.</h2>
+    <p>
+      An <code>int</code> is not a mathematical integer &mdash; it is a fixed number of bits. When a result needs more bits
+      than the type has, the extra bits are simply thrown away. The value <em>wraps around</em>, and code that assumed
+      "bigger input &rarr; bigger number" quietly breaks.
+    </p>
+  </div>
+
+  <div class="card scenario-bar">
+    <label class="field inline">
+      <span>Scenario</span>
+      <select id="int-scenario">
+        <option value="explore">A. Explore &mdash; wrap any arithmetic you like</option>
+        <option value="odometer">B. Odometer &mdash; increment until it wraps</option>
+        <option value="alloc">C. Allocation overflow &mdash; <code>malloc(n * sizeof t)</code></option>
+        <option value="signed">D. Signed/unsigned bug &mdash; a negative length passes the check</option>
+      </select>
+    </label>
+    <div class="scenario-shared">
+      <label class="field inline">
+        <span>Width</span>
+        <select id="int-width">
+          <option value="8">8-bit</option>
+          <option value="16">16-bit</option>
+          <option value="32" selected>32-bit</option>
+          <option value="64">64-bit</option>
+        </select>
+      </label>
+      <div class="segmented" id="int-signedness" role="group" aria-label="Signedness">
+        <button class="seg seg-active" id="int-signed" data-mode="signed">signed</button>
+        <button class="seg" id="int-unsigned" data-mode="unsigned">unsigned</button>
+      </div>
+    </div>
+    <p class="range-readout">
+      Representable range: <code id="int-range">&mdash;</code>
+    </p>
+  </div>
+
+  <!-- ---- Scenario A: explore ---- -->
+  <div class="scenario" id="sc-explore">
+    <div class="workspace workspace-2">
+      <div class="col">
+        <div class="card">
+          <h3>Operands</h3>
+
+          <label class="field">
+            <span>a</span>
+            <input type="text" inputmode="numeric" id="int-a" value="2000000000" spellcheck="false" />
+            <input type="range" id="int-a-range" />
+          </label>
+
+          <label class="field">
+            <span>operator</span>
+            <select id="int-op">
+              <option value="+">a + b</option>
+              <option value="-">a - b</option>
+              <option value="*">a * b</option>
+              <option value="<<">a &lt;&lt; b</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>b</span>
+            <input type="text" inputmode="numeric" id="int-b" value="2000000000" spellcheck="false" />
+            <input type="range" id="int-b-range" />
+          </label>
+
+          <div class="btn-row">
+            <button class="btn" data-preset="int-max">a = INT_MAX, b = 1</button>
+            <button class="btn" data-preset="int-min">a = INT_MIN, b = 1, a &minus; b</button>
+            <button class="btn" data-preset="mul">big &times; big</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Result</h3>
+          <table class="result-table">
+            <tbody>
+              <tr><th>true math result</th><td class="mono" id="int-true">&mdash;</td></tr>
+              <tr><th>stored in the type</th><td class="mono big" id="int-stored">&mdash;</td></tr>
+              <tr><th>bits discarded</th><td class="mono" id="int-lost">&mdash;</td></tr>
+              <tr><th>same bits read as <span id="int-other-label">unsigned</span></th><td class="mono" id="int-other">&mdash;</td></tr>
+            </tbody>
+          </table>
+          <div class="banner" id="int-banner">Enter two operands.</div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <h3>Bit view</h3>
+          <p class="hint">Dashed columns are outside the type. Red means those bits were produced by the maths and then thrown away.</p>
+          <div class="bitrows" id="int-bits"></div>
+        </div>
+
+        <div class="card">
+          <h3>Wrap-around dial</h3>
+          <p class="hint">
+            The value space is a circle. Adding past the top edge does not keep climbing &mdash; it comes back around
+            the bottom.
+          </p>
+          <div class="dial-wrap">
+            <svg id="int-dial" viewBox="0 0 320 320" role="img" aria-label="Circular diagram of the value range showing where the result lands"></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- Scenario B: odometer ---- -->
+  <div class="scenario" id="sc-odometer" hidden>
+    <div class="workspace workspace-2">
+      <div class="col">
+        <div class="card">
+          <h3>A counter that keeps counting</h3>
+          <pre class="code">for (;;) {
+    counter = counter + <b id="odo-step-code">1</b>;   /* <span id="odo-type-code">int32_t</span> */
+}</pre>
+          <label class="field">
+            <span>step size</span>
+            <input type="range" id="odo-step" min="1" max="64" step="1" value="1" />
+            <small class="range-legend"><span>+1</span><span id="odo-step-label">+1</span><span>+64</span></small>
+          </label>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="odo-play">&#9654; Auto-count</button>
+            <button class="btn" id="odo-tick">+ one step</button>
+            <button class="btn" id="odo-near">Jump to just below the max</button>
+            <button class="btn" id="odo-reset">Reset to 0</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Counter</h3>
+          <div class="odo-value mono" id="odo-value">0</div>
+          <div class="odo-bar"><div class="odo-fill" id="odo-fill"></div></div>
+          <dl class="regs">
+            <dt>wraps so far</dt><dd id="odo-wraps">0</dd>
+            <dt>distance to overflow</dt><dd id="odo-remaining" class="mono">&mdash;</dd>
+          </dl>
+          <div class="banner" id="odo-banner">Counting normally.</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h3>Bits</h3>
+          <div class="bitrows" id="odo-bits"></div>
+        </div>
+        <div class="card">
+          <h3>Why this matters</h3>
+          <ul class="tips">
+            <li>Signed overflow in C/C++ is <b>undefined behaviour</b> &mdash; the compiler may assume it never happens and delete your
+              <code>if (x + 1 &lt; x)</code> check entirely.</li>
+            <li>Unsigned overflow is defined to wrap modulo 2<sup>N</sup> &mdash; legal, but still a logic bug if you did not expect it.</li>
+            <li>Session counters, timestamps, and reference counts that wrap can resurrect freed objects or reset limits.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- Scenario C: allocation overflow ---- -->
+  <div class="scenario" id="sc-alloc" hidden>
+    <div class="workspace workspace-2">
+      <div class="col">
+        <div class="card">
+          <h3>The classic allocation bug</h3>
+          <pre class="code">/* count comes from the network / a file header */
+<span id="alloc-type-code">uint32_t</span> count = <b id="alloc-count-code">16</b>;
+Item *items = malloc(count * sizeof(Item));   /* sizeof(Item) == <b id="alloc-elem-code">16</b> */
+for (<span id="alloc-type-code2">uint32_t</span> i = 0; i &lt; count; i++)
+    items[i] = read_item();                   /* writes count * 16 bytes */</pre>
+
+          <label class="field">
+            <span>count <small>(attacker controlled)</small></span>
+            <input type="text" inputmode="numeric" id="alloc-count" value="16" spellcheck="false" />
+            <input type="range" id="alloc-count-range" min="0" max="64" step="1" value="16" />
+            <small class="range-legend"><span>0</span><span>slider sweeps the whole range, including the danger zone</span><span>max</span></small>
+          </label>
+
+          <label class="field">
+            <span>sizeof(Item) = <b id="alloc-elem-label">16</b> bytes</span>
+            <input type="range" id="alloc-elem" min="1" max="64" step="1" value="16" />
+          </label>
+
+          <div class="btn-row">
+            <button class="btn" id="alloc-safe-preset">A harmless count</button>
+            <button class="btn btn-primary" id="alloc-bad-preset">The count that wraps</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card">
+          <h3>What the allocator is told vs. what gets written</h3>
+          <table class="result-table">
+            <tbody>
+              <tr><th>count &times; sizeof(Item), exact</th><td class="mono" id="alloc-exact">&mdash;</td></tr>
+              <tr><th>value actually passed to <code>malloc</code></th><td class="mono big" id="alloc-passed">&mdash;</td></tr>
+              <tr><th>bytes the loop will write</th><td class="mono" id="alloc-written">&mdash;</td></tr>
+              <tr><th>bytes written past the end</th><td class="mono big" id="alloc-overflow">&mdash;</td></tr>
+            </tbody>
+          </table>
+          <div class="banner" id="alloc-banner">&mdash;</div>
+          <div class="heap" aria-hidden="true">
+            <div class="heap-label">heap</div>
+            <div class="heap-track">
+              <div class="heap-alloc" id="alloc-block"><span>allocated</span></div>
+              <div class="heap-spill" id="alloc-spill"><span>overflow</span></div>
+            </div>
+            <div class="heap-legend"><span>chunk returned by malloc</span><span>other heap objects / metadata</span></div>
+          </div>
+          <ul class="tips">
+            <li>Fix: check before you multiply &mdash; <code>if (count &gt; SIZE_MAX / sizeof(Item)) abort();</code></li>
+            <li>Or use <code>calloc(count, sizeof(Item))</code>, which is required to detect the overflow and return <code>NULL</code>.</li>
+            <li>Or use a checked-arithmetic builtin: <code>__builtin_mul_overflow()</code>.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- Scenario D: signed/unsigned ---- -->
+  <div class="scenario" id="sc-signed" hidden>
+    <div class="workspace workspace-2">
+      <div class="col">
+        <div class="card">
+          <h3>One bounds check, two different types</h3>
+          <pre class="code">#define MAX 256
+char dst[MAX];
+
+void handle(char *src, <b>int</b> len) {       /* signed */
+    if (len &gt; MAX)
+        return;                     /* "too big" rejected */
+    memcpy(dst, src, len);          /* len converts to size_t (unsigned) */
+}</pre>
+          <label class="field">
+            <span>len passed in <small>(signed <span id="su-type">int32_t</span>)</small></span>
+            <input type="text" inputmode="numeric" id="su-len" value="-1" spellcheck="false" />
+            <input type="range" id="su-len-range" />
+          </label>
+          <div class="btn-row">
+            <button class="btn" id="su-ok">A normal length</button>
+            <button class="btn" id="su-big">Too big &mdash; rejected</button>
+            <button class="btn btn-primary" id="su-neg">Negative &mdash; sneaks through</button>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h3>Step by step</h3>
+          <ol class="trace" id="su-trace"></ol>
+          <div class="banner" id="su-banner">&mdash;</div>
+        </div>
+        <div class="card">
+          <h3>The same 32 bits, two readings</h3>
+          <div class="bitrows" id="su-bits"></div>
+          <ul class="tips">
+            <li>Comparing a signed value against an unsigned one converts the signed value &mdash; negative becomes enormous.</li>
+            <li>Use <code>size_t</code> for sizes, and reject negatives explicitly: <code>if (len &lt; 0 || len &gt; MAX) return;</code></li>
+            <li>Turn on <code>-Wsign-compare -Wconversion</code> and treat the warnings as errors.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="app-footer">
+  <p>
+    Overflow Lab &mdash; a classroom teaching module. Concepts inspired by educational projects such as
+    <a href="https://github.com/benjholla/bomod" target="_blank" rel="noopener noreferrer">BOMOD</a>.
+    Built with plain HTML, CSS, and JavaScript &mdash; no build step, no dependencies, no network access.
+  </p>
+</footer>
+
+<script src="js/util.js"></script>
+<script src="js/stack.js"></script>
+<script src="js/integer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
