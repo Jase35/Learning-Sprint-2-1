@@ -19,8 +19,8 @@ No build step, no dependencies, no network access required.
 **Option 1 — just open the file**
 
 ```
-git clone https://github.com/Jase35/Learning-Sprint-2.1.git
-cd Learning-Sprint-2.1
+git clone https://github.com/Jase35/Learning-Sprint-2-1.git
+cd Learning-Sprint-2-1
 ```
 
 Then double-click `index.html`, or open it in any modern browser.
@@ -31,13 +31,6 @@ Then double-click `index.html`, or open it in any modern browser.
 python -m http.server 8000
 # then browse to http://localhost:8000
 ```
-
-**Option 3 — GitHub Pages**
-
-Enable Pages for this repository (Settings → Pages → Deploy from branch → `main` / root) and the app is live
-at `https://jase35.github.io/Learning-Sprint-2.1/`.
-
-Requires any browser with `BigInt` support — Chrome/Edge 67+, Firefox 68+, Safari 14+.
 
 ---
 
